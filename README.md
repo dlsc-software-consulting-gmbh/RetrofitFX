@@ -64,7 +64,7 @@ started or finished or an exception has occurred or a result has been received. 
 
 ### Default Handlers / Configuration
 
-Default handlers are very useful when service invocations are create in different places of the application but executed
+Default handlers are very useful when service invocations are created in different places of the application but executed
 in a single central place. It allows the central execution place to add handlers without overriding handlers defined in
 the place where the invocation was initially created.
 
