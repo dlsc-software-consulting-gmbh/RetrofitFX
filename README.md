@@ -10,7 +10,7 @@ handlers that will be invoked in various situations, e.g. when the server return
 
 ### Example
 
-Example: assume that `myEndpoints` defines a method called `getCustomers()`:
+Example: assume that `myEndpoints` defines a method called `getAllCustomers()`:
 
 ```java
 public interface MyService {
