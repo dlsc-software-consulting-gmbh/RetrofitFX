@@ -25,6 +25,7 @@
             <name>Apache 2.0</name>
         </license>
     </licenses>
+
     <scm>
         <url>https://github.com/dlsc-software-consulting-gmbh/RetrofitFX</url>
     </scm>
