@@ -313,7 +313,7 @@ public final class ServiceInvocation<T> implements Worker<T> {
 
                 if (onFailureDetailedHandler != null) {
                     logger.trace("invoking onFailureDetailed handler");
-                    runAndWait(() -> onFailureDetailed.accept(name, response));
+                    runAndWait(() -> onFailureDetailedHandler.accept(name, response));
                 }
             }
         }
