@@ -91,6 +91,8 @@ public final class ServiceInvocation<T> implements Worker<T> {
 
     private long delay;
 
+    private boolean cancelled;
+
     private ServiceInvocation(String name, ServiceSupplier<T> service) {
         this.name = Objects.requireNonNull(name, "service invocation name can not be null");
         this.service = Objects.requireNonNull(service, "service can not be null");
@@ -742,9 +744,26 @@ public final class ServiceInvocation<T> implements Worker<T> {
 
     // cancel
 
+    /**
+     * Marks the invocation as cancelled. Please be aware that the invocation will still execute
+     * once started. The "cancelled" flag can only be used by the client to check whether the application
+     * is still interested in the result.
+     *
+     * @return always true
+     */
     @Override
     public boolean cancel() {
-        throw new UnsupportedOperationException();
+        cancelled = true;
+        return true;
+    }
+
+    /**
+     * Returns true if the application has invoked the {@link #cancel} method.
+     *
+     * @return true or false depending on whether the invocation has been cancelled or not
+     */
+    public boolean isCancelled() {
+        return cancelled;
     }
 
     /**
