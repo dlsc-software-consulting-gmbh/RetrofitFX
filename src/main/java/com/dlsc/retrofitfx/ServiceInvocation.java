@@ -286,14 +286,10 @@ public final class ServiceInvocation<T> implements Worker<T> {
 
             logger.error("service call was not successful: {} {} {}", code, errorMessage, response);
 
-            if (onStatusCode != null || onStatusCodeDefault != null) {
-
-                BiConsumer<String, String> statusCodeConsumer = getOnStatusCode(httpStatusCode);
-
-                if (statusCodeConsumer != null) {
-                    logger.trace("invoking onStatusCode handler for status code {}", code);
-                    Platform.runLater(() -> statusCodeConsumer.accept(name, errorMessage));
-                }
+            BiConsumer<String, String> statusCodeConsumer = getOnStatusCode(httpStatusCode);
+            if (statusCodeConsumer != null) {
+                logger.trace("invoking onStatusCode handler for status code {}", code);
+                Platform.runLater(() -> statusCodeConsumer.accept(name, errorMessage));
             } else if (onAnyStatusCode != null) {
                 logger.trace("invoking onAnyStatusCode for status code {}", code);
                 Platform.runLater(() -> onAnyStatusCode.accept(name, httpStatusCode));
