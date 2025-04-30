@@ -301,6 +301,8 @@ public final class ServiceInvocation<T> implements Worker<T> {
                 logger.trace("invoking onAnyStatusCodeDefault for status code {}", code);
                 Platform.runLater(() -> onAnyStatusCodeDefault.accept(name, httpStatusCode));
             }
+        } else {
+            String errorMessage = simulatingFailure ? "Simulated failure" : errorBody;
 
             BiConsumer<String, String> onFailureHandler = getOnFailure();
 
