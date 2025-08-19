@@ -51,7 +51,7 @@ import java.util.function.Consumer;
  * of these consumers have a second version with the postfix "default" to their name, e.g. "onFailure" and
  * "onFailureDefault". The idea behind this is that an application might provide a central place
  * where service invocations are being executed (e.g. Window.execute(si) or Workbench.execute(si))
- * and wants to set "default" handlers in that location. At the same time each specific occurrence
+ * and wants to set "default" handlers in that location. At the same time, each occurrence
  * of a service invocation might require its own / more specific handlers.
  *
  * @param <T> the type of the result object wrapped inside the retrofit response
@@ -209,10 +209,10 @@ public final class ServiceInvocation<T> implements Worker<T> {
                     failure(response, errorBody);
 
                     String errorMessage = errorBody == null ? "" : " " + errorBody;
-                    Platform.runLater(() -> result.completeExceptionally(new Exception("Service Error " + response.code() + errorMessage)));
+                    Platform.runLater(() -> result.completeExceptionally(new Exception("service Error " + response.code() + errorMessage)));
                 }
             } catch (Exception t) {
-                logger.warn("Error processing response from service", t);
+                logger.warn("error processing response from service", t);
                 exception(result, t);
             } finally {
                 doFinally();
@@ -260,7 +260,7 @@ public final class ServiceInvocation<T> implements Worker<T> {
 
         if (onExceptionHandler != null) {
             try {
-                logger.trace("invoking onException handler");
+                logger.trace("invoking exception handler");
                 runAndWait(() -> onExceptionHandler.accept(name, t));
             } catch (Exception e) {
                 logger.error("error when trying to propagate error message from service invocation: {}", getName(), e);
@@ -278,8 +278,10 @@ public final class ServiceInvocation<T> implements Worker<T> {
 
         int code = response.code();
 
+        /*
+         * First, check if there is any specific handler for the given status code and invoke it.
+         */
         HttpStatusCode httpStatusCode = HttpStatusCode.fromStatusCode(code);
-
         if (httpStatusCode != null) {
 
             String errorMessage = simulatingFailure ? "Simulated failure" : (errorBody == null || errorBody.isBlank() ? httpStatusCode.getReasonPhrase() : errorBody);
@@ -297,24 +299,24 @@ public final class ServiceInvocation<T> implements Worker<T> {
                 logger.trace("invoking onAnyStatusCodeDefault for status code {}", code);
                 Platform.runLater(() -> onAnyStatusCodeDefault.accept(name, httpStatusCode));
             }
+        }
+
+        String errorMessage = simulatingFailure ? "Simulated failure" : errorBody;
+
+        BiConsumer<String, String> onFailureHandler = getOnFailure();
+
+        if (onFailureHandler != null) {
+            runAndWait(() -> {
+                logger.trace("invoking failure handler");
+                onFailureHandler.accept(name, errorMessage);
+            });
         } else {
-            String errorMessage = simulatingFailure ? "Simulated failure" : errorBody;
 
-            BiConsumer<String, String> onFailureHandler = getOnFailure();
+            BiConsumer<String, Response<T>> onFailureDetailedHandler = getOnFailureDetailed();
 
-            if (onFailureHandler != null) {
-                runAndWait(() -> {
-                    logger.trace("invoking onFailure handler");
-                    onFailureHandler.accept(name, errorMessage);
-                });
-            } else {
-
-                BiConsumer<String, Response<T>> onFailureDetailedHandler = getOnFailureDetailed();
-
-                if (onFailureDetailedHandler != null) {
-                    logger.trace("invoking onFailureDetailed handler");
-                    runAndWait(() -> onFailureDetailedHandler.accept(name, response));
-                }
+            if (onFailureDetailedHandler != null) {
+                logger.trace("invoking detailed failure handler");
+                runAndWait(() -> onFailureDetailedHandler.accept(name, response));
             }
         }
     }
@@ -325,6 +327,21 @@ public final class ServiceInvocation<T> implements Worker<T> {
             state.set(State.SUCCEEDED);
         });
 
+        /*
+         * First, check if there are any specific handlers for the given status code and invoke them.
+         */
+        HttpStatusCode httpStatusCode = HttpStatusCode.fromStatusCode(response.code());
+        if (httpStatusCode != null) {
+            BiConsumer<String, String> onStatusCode = getOnStatusCode(httpStatusCode);
+            if (onStatusCode != null) {
+                logger.trace("invoking status code handler for status code {}", response.code());
+                Platform.runLater(() -> onStatusCode.accept(name, response.message()));
+            }
+        }
+
+        /*
+         * Second, check if there is a generic handler for general success and invoke it.
+         */
         if (onSuccess != null) {
             logger.trace("invoking onSuccess handler");
             runAndWait(() -> {
@@ -335,7 +352,7 @@ public final class ServiceInvocation<T> implements Worker<T> {
                 }
             });
         } else if (onSuccessDetailed != null) {
-            logger.trace("invoking onSuccessDetailed handler");
+            logger.trace("invoking detailed success handler");
             runAndWait(() -> onSuccessDetailed.accept(response));
         }
     }

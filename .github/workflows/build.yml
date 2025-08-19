@@ -2,7 +2,7 @@ name: Build
 on:
   push:
     branches:
-      - main
+      - master
   pull_request:
     types: [opened, synchronize, reopened]
 jobs:
@@ -11,13 +11,19 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.event.head_commit.message, '🏁 Releasing version') != true
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
-      - name: Set up JDK 21
-        uses: actions/setup-java@v1
+      - name: Enable Sonar for local PRs not from Dependabot
+        if: ${{ github.event.sender.login != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        run: echo "USE_SONAR=sonar" >> $GITHUB_ENV
+      - name: Disable Sonar for foreign PRs or from Dependabot
+        if: ${{ github.event.sender.login == 'dependabot[bot]' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+        run: echo "USE_SONAR=-sonar" >> $GITHUB_ENV
+      - name: Set up JDK 24
+        uses: actions/setup-java@v4
         with:
-          java-version: 21
+          java-version: 24
           distribution: 'zulu'
       - name: Cache SonarCloud packages
         uses: actions/cache@v4
@@ -35,4 +41,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information, if any
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: ./mvnw -B install
+        run: ./mvnw -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar

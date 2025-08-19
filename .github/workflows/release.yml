@@ -16,10 +16,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 'Set up Java 21'
-        uses: actions/setup-java@v2
+      - name: 'Set up Java 24'
+        uses: actions/setup-java@v4
         with:
-          java-version: 21
+          java-version: 24
           distribution: 'zulu'
           server-id: central
           server-username: MAVEN_USERNAME
@@ -28,7 +28,7 @@ jobs:
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
 
       - name: 'Cache Maven packages'
-        uses: actions/cache@v4
+        uses: actions/cache@v3
         with:
           path: ~/.m2
           key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
@@ -43,23 +43,23 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --global user.name "GitHub Action"
           git commit -a -m "🏁 Releasing version $VERSION"
-          git push origin HEAD:main
+          git push origin HEAD:master
 
       - name: 'Release to Maven Central'
         env:
-          MAVEN_USERNAME: ${{ secrets.SONATYPE_WITH_TOKEN_USERNAME }}
-          MAVEN_CENTRAL_TOKEN: ${{ secrets.SONATYPE_WITH_TOKEN_PASSWORD }}
+          MAVEN_USERNAME: ${{ secrets.PUBLISHER_PORTAL_USERNAME }}
+          MAVEN_CENTRAL_TOKEN: ${{ secrets.PUBLISHER_PORTAL_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           export GPG_TTY=$(tty)
           ./mvnw --no-transfer-progress -B --file pom.xml \
             -Drepository.url=https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
-            -Dmaven.site.skip=true -Drelease=true deploy
+            -Dmaven.site.skip=true -Drelease=true deploy  -s ./settings.xml
 
       - name: 'Release to GitHub'
         env:
           JRELEASER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./mvnw -B --file pom.xml -Prelease -pl :retrofitfx jreleaser:full-release
+        run: ./mvnw -B --file pom.xml -Prelease -pl :parent jreleaser:full-release
 
       - name: 'JReleaser output'
         if: always()
