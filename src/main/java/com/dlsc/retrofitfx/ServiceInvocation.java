@@ -69,7 +69,8 @@ public final class ServiceInvocation<T> implements Worker<T> {
     private Consumer<String> onStartDefault;
     private Consumer<T> onSuccess;
     private Consumer<Response<T>> onSuccessDetailed;
-
+    private BiConsumer<String, String> onCancelled;
+    private BiConsumer<String, String> onCancelledDefault;
     private Runnable onFinally;
     private Runnable onFinallyDefault;
 
@@ -92,6 +93,8 @@ public final class ServiceInvocation<T> implements Worker<T> {
     private long delay;
 
     private boolean cancelled;
+
+    private boolean onCancelCalled;
 
     private ServiceInvocation(String name, ServiceSupplier<T> service) {
         this.name = Objects.requireNonNull(name, "service invocation name can not be null");
@@ -156,6 +159,11 @@ public final class ServiceInvocation<T> implements Worker<T> {
         Objects.requireNonNull(executor, "executor can not be null");
 
         CompletableFuture<T> result = new CompletableFuture<>();
+        if (isCancelled()) {
+            doCancel("cancelled immediately, setting completion result to null");
+            result.complete(null); // if cancelled, we can return immediately with an empty result
+            return result;
+        }
 
         state.set(State.RUNNING);
         totalWork.set(1);
@@ -164,71 +172,161 @@ public final class ServiceInvocation<T> implements Worker<T> {
 
         executor.execute(() -> {
 
+            if (isCancelled()) {
+                doCancel("cancelled at start of executor call execution");
+                return;
+            }
+
             if (onStartDefault != null) {
-                Platform.runLater(() -> onStartDefault.accept(getName()));
+                Platform.runLater(() -> {
+                    if (!isCancelled()) {
+                        onStartDefault.accept(getName());
+                    } else {
+                        doCancel("cancelled before being able to call 'on start default' handler");
+                    }
+                });
             }
 
             if (onStart != null) {
-                Platform.runLater(() -> onStart.accept(getName()));
+                Platform.runLater(() -> {
+                    if (!isCancelled()) {
+                        onStart.accept(getName());
+                    } else {
+                        doCancel("cancelled before being able to call 'on start' handler");
+                    }
+                });
             }
 
             logger.debug("executing service invocation with name: {}", getName());
             try {
-
-                /*
-                 * For testing or debugging purposes we can intentionally delay the
-                 * execution of this service call.
-                 */
-                if (delay > 0) {
-                    delay();
-                }
-
-                Platform.runLater(() -> message.set("Calling service"));
-
-                Instant startTime = Instant.now();
-
-                Response<T> response = service.get();
-
-                if (logger.isInfoEnabled()) {
-                    Duration duration = Duration.between(startTime, Instant.now());
-                    logger.info("server side call duration: {}ms, call = {}", duration.toMillis(), getName());
-                }
-
-                if (response.isSuccessful() && !isSimulatingFailure()) {
-                    success(response);
-
-                    Platform.runLater(() -> result.complete(response.body()));
-                } else {
-                    String errorBody = null;
-                    try (ResponseBody responseBody = response.errorBody()) {
-                        if (responseBody != null) {
-                            errorBody = responseBody.string(); // WARNING! THIS METHOD CAN ONLY BE CALLED ONCE!!!
-                        }
+                if (!isCancelled()) {
+                    /*
+                     * For testing or debugging purposes we can intentionally delay the
+                     * execution of this service call.
+                     */
+                    if (delay > 0) {
+                        delay();
                     }
 
-                    failure(response, errorBody);
+                    Platform.runLater(() -> {
+                        if (!isCancelled()) {
+                            message.set("Calling service");
+                        } else {
+                            doCancel("cancelled before being able to set message to 'calling service'");
+                        }
+                    });
 
-                    String errorMessage = errorBody == null ? "" : " " + errorBody;
-                    Platform.runLater(() -> result.completeExceptionally(new Exception("service Error " + response.code() + errorMessage)));
+                    Instant startTime = Instant.now();
+
+                    if (!isCancelled()) {
+                        Response<T> response = service.get();
+
+                        if (logger.isInfoEnabled() && !isCancelled()) {
+                            Duration duration = Duration.between(startTime, Instant.now());
+                            logger.info("server side call duration: {}ms, call = {}", duration.toMillis(), getName());
+                        }
+
+                        // the call to the service might have taken some time, better to check again if cancelled is true
+                        if (!isCancelled()) {
+                            if (response.isSuccessful() && !isSimulatingFailure()) {
+                                success(response);
+
+                                Platform.runLater(() -> {
+                                    // who knows when this will run, check the cancelled flag again
+                                    if (!isCancelled()) {
+                                        result.complete(response.body());
+                                    } else {
+                                        doCancel("cancelled after service invocation but before being able to set completion result to response body");
+                                        result.complete(null);
+                                    }
+                                });
+                            } else {
+                                String errorBody = null;
+                                try (ResponseBody responseBody = response.errorBody()) {
+                                    if (responseBody != null) {
+                                        errorBody = responseBody.string(); // WARNING! THIS METHOD CAN ONLY BE CALLED ONCE!!!
+                                    }
+                                }
+
+                                if (!isCancelled()) {
+                                    failure(response, errorBody);
+                                } else {
+                                    doCancel("cancelled after service invocation but before being able to handle failure and error body.");
+                                }
+
+                                String errorMessage = errorBody == null ? "" : " " + errorBody;
+                                Platform.runLater(() -> {
+                                    // who knows when this will run, check the cancelled flag again
+                                    if (!isCancelled()) {
+                                        result.completeExceptionally(new Exception("service Error " + response.code() + errorMessage));
+                                    } else {
+                                        doCancel("cancelled after service invocation but before being able to set completion exception to service error");
+                                        result.complete(null);
+                                    }
+                                });
+                            }
+                        } else {
+                            doCancel("cancelled before processing the response from the service");
+                        }
+                    } else {
+                        doCancel("cancelled before the actual call to the backend");
+                    }
+                } else {
+                    doCancel("cancelled before updating the status message to 'calling service'");
                 }
             } catch (Exception t) {
                 logger.warn("error processing response from service", t);
                 exception(result, t);
             } finally {
-                doFinally();
+                if (!isCancelled()) {
+                    doFinally();
+                } else {
+                    doCancel("cancelled before calling the 'onFinished' handlers");
+                }
             }
         });
 
+        if (isCancelled()) {
+            result.complete(null);
+        }
         return result;
+    }
+
+    private void doCancel(String msg) {
+        if (onCancelCalled) {
+            return;
+        }
+
+        onCancelCalled = true;
+
+        if (onCancelledDefault != null) {
+            try {
+                logger.trace("invoking onCancelledDefault handler");
+                onCancelledDefault.accept(name, msg);
+            } catch (Exception e) {
+                logger.error("error when trying to execute ‘on cancelled default' of service invocation: {}", getName(), e);
+            }
+        }
+
+        if (onCancelled != null) {
+            try {
+                logger.trace("invoking onCancelled handler");
+                onCancelled.accept(name, msg);
+            } catch (Exception e) {
+                logger.error("error when trying to execute ‘on cancelled' of service invocation: {}", getName(), e);
+            }
+        }
     }
 
     private void doFinally() {
         Platform.runLater(() -> {
-            running.set(false);
-            progress.set(1);
+            if (!isCancelled()) {
+                running.set(false);
+                progress.set(1);
+            }
         });
 
-        if (onFinallyDefault != null) {
+        if (onFinallyDefault != null && !isCancelled()) {
             try {
                 logger.trace("invoking onFinallyDefault handler");
                 runAndWait(onFinallyDefault);
@@ -237,7 +335,7 @@ public final class ServiceInvocation<T> implements Worker<T> {
             }
         }
 
-        if (onFinally != null) {
+        if (onFinally != null && !isCancelled()) {
             try {
                 logger.trace("invoking onFinally handler");
                 runAndWait(onFinally);
@@ -251,9 +349,11 @@ public final class ServiceInvocation<T> implements Worker<T> {
         logger.error("error when trying to invoke the service: {}", getName(), t);
 
         Platform.runLater(() -> {
-            state.set(State.FAILED);
-            exception.set(t);
-            message.set("Server-side error");
+            if (!isCancelled()) {
+                state.set(State.FAILED);
+                exception.set(t);
+                message.set("Server-side error");
+            }
         });
 
         BiConsumer<String, Exception> onExceptionHandler = getOnException();
@@ -272,8 +372,10 @@ public final class ServiceInvocation<T> implements Worker<T> {
 
     private void failure(Response<T> response, String errorBody) throws ExecutionException, InterruptedException {
         Platform.runLater(() -> {
-            message.set("Call was not successful");
-            state.set(State.FAILED);
+            if (!isCancelled()) {
+                message.set("Call was not successful");
+                state.set(State.FAILED);
+            }
         });
 
         int code = response.code();
@@ -282,7 +384,7 @@ public final class ServiceInvocation<T> implements Worker<T> {
          * First, check if there is any specific handler for the given status code and invoke it.
          */
         HttpStatusCode httpStatusCode = HttpStatusCode.fromStatusCode(code);
-        if (httpStatusCode != null) {
+        if (httpStatusCode != null && !isCancelled()) {
 
             String errorMessage = simulatingFailure ? "Simulated failure" : (errorBody == null || errorBody.isBlank() ? httpStatusCode.getReasonPhrase() : errorBody);
 
@@ -291,13 +393,25 @@ public final class ServiceInvocation<T> implements Worker<T> {
             BiConsumer<String, String> statusCodeConsumer = getOnStatusCode(httpStatusCode);
             if (statusCodeConsumer != null) {
                 logger.trace("invoking onStatusCode handler for status code {}", code);
-                Platform.runLater(() -> statusCodeConsumer.accept(name, errorMessage));
+                Platform.runLater(() -> {
+                    if (!isCancelled()) {
+                        statusCodeConsumer.accept(name, errorMessage);
+                    }
+                });
             } else if (onAnyStatusCode != null) {
                 logger.trace("invoking onAnyStatusCode for status code {}", code);
-                Platform.runLater(() -> onAnyStatusCode.accept(name, httpStatusCode));
+                Platform.runLater(() -> {
+                    if (!isCancelled()) {
+                        onAnyStatusCode.accept(name, httpStatusCode);
+                    }
+                });
             } else if (onAnyStatusCodeDefault != null) {
                 logger.trace("invoking onAnyStatusCodeDefault for status code {}", code);
-                Platform.runLater(() -> onAnyStatusCodeDefault.accept(name, httpStatusCode));
+                Platform.runLater(() -> {
+                    if (!isCancelled()) {
+                        onAnyStatusCodeDefault.accept(name, httpStatusCode);
+                    }
+                });
             }
         }
 
@@ -323,8 +437,10 @@ public final class ServiceInvocation<T> implements Worker<T> {
 
     private void success(Response<T> response) throws ExecutionException, InterruptedException {
         Platform.runLater(() -> {
-            message.set("Call was successful");
-            state.set(State.SUCCEEDED);
+            if (!isCancelled()) {
+                message.set("Call was successful");
+                state.set(State.SUCCEEDED);
+            }
         });
 
         /*
@@ -335,7 +451,11 @@ public final class ServiceInvocation<T> implements Worker<T> {
             BiConsumer<String, String> onStatusCode = getOnStatusCode(httpStatusCode);
             if (onStatusCode != null) {
                 logger.trace("invoking status code handler for status code {}", response.code());
-                Platform.runLater(() -> onStatusCode.accept(name, response.message()));
+                Platform.runLater(() -> {
+                    if (!isCancelled()) {
+                        onStatusCode.accept(name, response.message());
+                    }
+                });
             }
         }
 
@@ -607,6 +727,28 @@ public final class ServiceInvocation<T> implements Worker<T> {
         return this;
     }
 
+    /**
+     * A consumer that will be invoked as seen as the service detects that it has been cancelled.
+     *
+     * @param onCancelled the runnable
+     * @return the service invocation
+     */
+    public ServiceInvocation<T> onCancelled(BiConsumer<String, String> onCancelled) {
+        this.onCancelled = onCancelled;
+        return this;
+    }
+
+    /**
+     * A consumer that will be invoked as seen as the service detects that it has been cancelled.
+     *
+     * @param onCancelledDefault the runnable
+     * @return the service invocation
+     */
+    public ServiceInvocation<T> onCancelledDefault(BiConsumer<String, String> onCancelledDefault) {
+        this.onCancelledDefault = onCancelledDefault;
+        return this;
+    }
+
     private void runAndWait(Runnable runnable) throws ExecutionException, InterruptedException {
         CompletableFuture<Void> result = new CompletableFuture<>();
         Platform.runLater(() -> {
@@ -617,7 +759,6 @@ public final class ServiceInvocation<T> implements Worker<T> {
                 result.completeExceptionally(e);
             }
         });
-
         result.get();
     }
 
