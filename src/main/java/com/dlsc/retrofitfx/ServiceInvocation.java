@@ -254,16 +254,7 @@ public final class ServiceInvocation<T> implements Worker<T> {
                                     doCancel("cancelled after service invocation but before being able to handle failure and error body.");
                                 }
 
-                                String errorMessage = errorBody == null ? "" : " " + errorBody;
-                                Platform.runLater(() -> {
-                                    // who knows when this will run, check the cancelled flag again
-                                    if (!isCancelled()) {
-                                        result.completeExceptionally(new Exception("service Error " + response.code() + errorMessage));
-                                    } else {
-                                        doCancel("cancelled after service invocation but before being able to set completion exception to service error");
-                                        result.complete(null);
-                                    }
-                                });
+                                Platform.runLater(() -> result.complete(null));
                             }
                         } else {
                             doCancel("cancelled before processing the response from the service");
